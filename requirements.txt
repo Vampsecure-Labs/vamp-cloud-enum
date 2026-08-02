@@ -1,0 +1,3 @@
+aiohttp>=3.9
+rich>=13.7.0
+fpdf2>=2.7          # Opcional: para --report-pdf
