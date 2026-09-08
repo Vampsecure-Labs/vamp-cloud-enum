@@ -106,14 +106,14 @@ AUTHOR    = "© VampSecure Studios — VampSecure Labs Security Research Divisio
 console = Console()
 
 BANNER = r"""
-  ____   ____    _    __  __ ____  _____ ____ _   _ ____  _____   _        _    ____ ____
- \ \ / / _  |  / \  |  \/  |  _ \/ ____/ ___| | | |  _ \| ____| | |      / \  | __ ) ___|
-  \ V / (_| | / _ \ | |\/| | |_) \___ \| |___| | | | |_) |  _|   | |     / _ \ |  _ \___ \
-   | |  \__, |/ ___ \| |  | |  __/ ___) |___  | |_| |  _ <| |___  | |___ / ___ \| |_) |__) |
-   |_|     /_/_/   \_|_|  |_|_|   |____/\____|\___/|_| \_|_____| |_____/_/   \_|____/____/
-      by Antonio Hernandez "Belky" — VampSecure Studios · vamp-cloud-enum v1.0 · Cloud Bucket Enumerator
-      ─────────────────────────────────────────────────────────────────────
-      USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
+__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___ 
+\ \ / /_\ |  \/  | _ \/ __| __/ __| | | | _ \ __| |    /_\ | _ ) __|
+ \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
+  \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
+  by Antonio Hernandez "Belky" — VampSecure Studios
+  vamp-cloud-enum v1.0 · Cloud Bucket Enumerator
+  ────────────────────────────────────────────────────────────────────────
+  USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
 
 # Sufijos/prefijos estándar de uso habitual en nombres de bucket
