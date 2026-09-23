@@ -99,19 +99,19 @@ from vampsec_report import (
 # CONSTANTES Y CONFIGURACIÓN
 # =============================================================================
 
-VERSION   = "1.1"
+VERSION   = "1.2"
 TOOL_NAME = "vamp-cloud-enum"
 AUTHOR    = "© VampSecure Studios — VampSecure Labs Security Research Division"
 
 console = Console()
 
 BANNER = r"""
-__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___ 
+__   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
 \ \ / /_\ |  \/  | _ \/ __| __/ __| | | | _ \ __| |    /_\ | _ ) __|
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-cloud-enum v1.1 · Cloud Bucket Enumerator
+  vamp-cloud-enum v1.2 · Cloud Bucket Enumerator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -1437,6 +1437,16 @@ def parse_args() -> argparse.Namespace:
             "(acceso público, listado de contenedores) — v1.1"
         ),
     )
+    p.add_argument(
+        "--check-functions",
+        action="store_true",
+        dest="check_functions",
+        help=(
+            "Comprobar exposición de funciones serverless: AWS Lambda function URLs "
+            "y Azure Function Apps. Genera muchas peticiones (usa con precaución). "
+            "Hallazgos: AWS_LAMBDA_URL_EXPOSED, AZURE_FUNCTION_EXPOSED — v1.2"
+        ),
+    )
 
     add_report_args(p)
     return p.parse_args()
@@ -1468,6 +1478,185 @@ def _load_wordlist(path: str) -> List[str]:
     except OSError as e:
         console.print(f"[red]Error al cargar wordlist '{path}': {e}[/red]")
         return []
+
+
+# =============================================================================
+# COMPROBACIÓN DE EXPOSICIÓN DE FUNCIONES SERVERLESS (v1.2)
+# =============================================================================
+
+# Regiones AWS más comunes para Lambda function URLs
+_AWS_LAMBDA_REGIONES: List[str] = [
+    "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+    "eu-west-1", "eu-west-2", "eu-central-1",
+    "ap-southeast-1", "ap-southeast-2", "ap-northeast-1",
+]
+
+# Funciones Azure habituales a probar (variantes del nombre del endpoint)
+_AZURE_FUNC_NOMBRES: List[str] = [
+    "api", "function", "func", "http", "trigger", "webhook",
+    "process", "handler", "main", "app",
+]
+
+
+def _generar_candidatos_lambda(dominios: List[str]) -> List[str]:
+    """
+    Genera candidatos para el ID de Lambda function URL usando partes del dominio.
+
+    Los function URL IDs de AWS Lambda son cadenas de 26 caracteres aleatorias
+    y no se pueden predecir. Esta función genera candidatos basados en las partes
+    del dominio para detectar funciones con nombres personalizados o patrones
+    predecibles que algunas organizaciones configuran.
+
+    Retorna lista de candidatos únicos (en minúsculas, solo alfanuméricos y guiones).
+    """
+    candidatos: set = set()
+    for dominio in dominios:
+        # Extraer parte principal del dominio (sin TLD)
+        partes = dominio.rstrip(".").split(".")
+        # Usar el nombre del dominio sin TLD y sin subdominios secundarios
+        if len(partes) >= 2:
+            nombre = partes[-2]
+        else:
+            nombre = partes[0]
+        # Normalizar: solo alfanuméricos y guiones
+        import re as _re
+        nombre_norm = _re.sub(r"[^a-z0-9\-]", "-", nombre.lower())
+        nombre_norm = _re.sub(r"-+", "-", nombre_norm).strip("-")
+        if not nombre_norm:
+            continue
+
+        candidatos.add(nombre_norm)
+        # Variantes comunes
+        for sfx in ("api", "func", "lambda", "fn", "app", "service", "svc", "handler"):
+            candidatos.add(f"{nombre_norm}-{sfx}")
+            candidatos.add(f"{sfx}-{nombre_norm}")
+
+    return list(candidatos)
+
+
+def _check_lambda_function_urls(
+    dominios: List[str],
+    findings: List[BucketResult],
+) -> None:
+    """
+    Prueba URLs de funciones Lambda AWS en busca de endpoints públicamente accesibles.
+
+    Realiza peticiones HEAD a `https://<candidato>.lambda-url.<región>.on.aws/`
+    para detectar funciones con URLs públicas habilitadas.
+
+    Severidad:
+      HIGH — Respuesta 200 (función accesible sin autenticación)
+      MEDIUM — Respuesta 403 (función existe pero requiere autenticación)
+    """
+    import urllib.request  as _ureq
+    import urllib.error    as _uerr
+
+    candidatos = _generar_candidatos_lambda(dominios)
+
+    for candidato in candidatos:
+        for region in _AWS_LAMBDA_REGIONES:
+            url = f"https://{candidato}.lambda-url.{region}.on.aws/"
+            try:
+                req = _ureq.Request(
+                    url,
+                    method="HEAD",
+                    headers={"User-Agent": f"VampSecureLabs/{VERSION}"},
+                )
+                with _ureq.urlopen(req, timeout=8) as resp:
+                    codigo = resp.status
+                    if codigo == 200:
+                        findings.append(BucketResult(
+                            name=candidato, provider="aws-lambda", url=url,
+                            status="PUBLIC", http_code=codigo,
+                            headers=dict(resp.headers),
+                            body_snippet=f"Lambda URL pública (200 OK) — {region}",
+                            severity="HIGH",
+                            finding_id="AWS_LAMBDA_URL_EXPOSED",
+                        ))
+            except _uerr.HTTPError as exc:
+                if exc.code == 403:
+                    # 403 confirma que la función existe (pero requiere auth)
+                    findings.append(BucketResult(
+                        name=candidato, provider="aws-lambda", url=url,
+                        status="FORBIDDEN", http_code=403,
+                        headers={},
+                        body_snippet=f"Lambda URL existe pero requiere autenticación (403) — {region}",
+                        severity="MEDIUM",
+                        finding_id="AWS_LAMBDA_URL_EXPOSED",
+                    ))
+            except _uerr.URLError:
+                # DNS NXDOMAIN u otro error de red: la función no existe con ese nombre/región
+                pass
+            except Exception:
+                pass
+
+
+def _check_azure_function_apps(
+    dominios: List[str],
+    findings: List[BucketResult],
+) -> None:
+    """
+    Prueba endpoints de Azure Function Apps en busca de funciones accesibles sin auth.
+
+    Realiza peticiones GET a `https://<nombre>.azurewebsites.net/api/<func>?code=`
+    donde <nombre> se genera a partir de los dominios objetivo y <func> es una
+    lista de nombres habituales de funciones HTTP trigger.
+
+    Severidad:
+      HIGH — Respuesta 200 (función accesible sin código de autorización)
+    """
+    import urllib.request  as _ureq
+    import urllib.error    as _uerr
+    import re              as _re
+
+    # Generar nombres de Function App candidatos a partir de los dominios
+    app_names: List[str] = []
+    for dominio in dominios:
+        partes = dominio.rstrip(".").split(".")
+        if len(partes) >= 2:
+            nombre = partes[-2]
+        else:
+            nombre = partes[0]
+        nombre_norm = _re.sub(r"[^a-z0-9\-]", "-", nombre.lower())
+        nombre_norm = _re.sub(r"-+", "-", nombre_norm).strip("-")
+        if not nombre_norm:
+            continue
+        app_names.append(nombre_norm)
+        # Variantes comunes de Function App
+        for sfx in ("api", "functions", "func", "app", "service"):
+            app_names.append(f"{nombre_norm}-{sfx}")
+            app_names.append(f"{sfx}-{nombre_norm}")
+
+    for app_name in app_names:
+        for func_nombre in _AZURE_FUNC_NOMBRES:
+            # Probar sin código de autorización (debería devolver 401/403 si es seguro)
+            url = f"https://{app_name}.azurewebsites.net/api/{func_nombre}?code="
+            try:
+                req = _ureq.Request(
+                    url,
+                    headers={"User-Agent": f"VampSecureLabs/{VERSION}"},
+                )
+                with _ureq.urlopen(req, timeout=8) as resp:
+                    codigo = resp.status
+                    if codigo == 200:
+                        cuerpo = resp.read(256).decode("utf-8", errors="ignore")
+                        findings.append(BucketResult(
+                            name=f"{app_name}/{func_nombre}", provider="azure-functions", url=url,
+                            status="PUBLIC", http_code=codigo,
+                            headers=dict(resp.headers),
+                            body_snippet=cuerpo[:200],
+                            severity="HIGH",
+                            finding_id="AZURE_FUNCTION_EXPOSED",
+                        ))
+            except _uerr.HTTPError as exc:
+                # 401/403 = función existe pero requiere auth → no es hallazgo
+                # 404 = función no existe → silencioso
+                pass
+            except _uerr.URLError:
+                # DNS NXDOMAIN: Function App no existe → silencioso
+                break  # Si el dominio no resuelve, saltar todas las funciones del mismo app_name
+            except Exception:
+                pass
 
 
 # =============================================================================
@@ -1701,6 +1890,31 @@ async def run(args: argparse.Namespace) -> int:
             found_all.extend(misconfig_findings)
         else:
             console.print("  [green]Sin malas configuraciones detectadas.[/]")
+
+    # ── Comprobaciones de exposición serverless (v1.2) ────────────────────────
+    if getattr(args, "check_functions", False) and args.domains:
+        console.print(
+            "\n[bold cyan]Comprobando exposición de funciones serverless "
+            "(Lambda URLs + Azure Functions)…[/]\n"
+        )
+        function_findings: List[BucketResult] = []
+
+        if "s3" in providers:
+            # Lambda es parte del ecosistema AWS (misma opción de proveedor que S3)
+            console.print("  [dim]→ AWS Lambda function URLs…[/]")
+            _check_lambda_function_urls(args.domains, function_findings)
+
+        if "azure" in providers:
+            console.print("  [dim]→ Azure Function Apps…[/]")
+            _check_azure_function_apps(args.domains, function_findings)
+
+        if function_findings:
+            console.print(
+                f"  [yellow]Funciones serverless expuestas:[/] {len(function_findings)}"
+            )
+            found_all.extend(function_findings)
+        else:
+            console.print("  [green]Sin funciones serverless expuestas detectadas.[/]")
 
     # ── Salida en consola ─────────────────────────────────────────────────────
     print_summary_table(found_all)
