@@ -3,7 +3,7 @@
 vamp_cloud_enum.py — Enumerador de Buckets/Blobs Cloud Públicos
 ================================================================
 VampSecure Labs · VampSecure Studios
-Para Uso Exclusivo en Pruebas de Penetración Autorizadas — v1.0
+Para Uso Exclusivo en Pruebas de Penetración Autorizadas — v1.1
 
 DESCRIPCIÓN GENERAL
 -------------------
@@ -99,7 +99,7 @@ from vampsec_report import (
 # CONSTANTES Y CONFIGURACIÓN
 # =============================================================================
 
-VERSION   = "1.0"
+VERSION   = "1.1"
 TOOL_NAME = "vamp-cloud-enum"
 AUTHOR    = "© VampSecure Studios — VampSecure Labs Security Research Division"
 
@@ -111,7 +111,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-cloud-enum v1.0 · Cloud Bucket Enumerator
+  vamp-cloud-enum v1.1 · Cloud Bucket Enumerator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -1428,6 +1428,15 @@ def parse_args() -> argparse.Namespace:
         dest="html_out",
         help="Guardar informe HTML dark-theme",
     )
+    p.add_argument(
+        "--check-misconfigs",
+        action="store_true",
+        dest="check_misconfigs",
+        help=(
+            "Comprobar malas configuraciones en S3/Azure/GCS sin credenciales "
+            "(acceso público, listado de contenedores) — v1.1"
+        ),
+    )
 
     add_report_args(p)
     return p.parse_args()
@@ -1464,6 +1473,134 @@ def _load_wordlist(path: str) -> List[str]:
 # =============================================================================
 # FUNCIÓN PRINCIPAL
 # =============================================================================
+
+# =============================================================================
+# COMPROBACIONES DE MALA CONFIGURACIÓN (v1.1) — urllib.request sin credenciales
+# =============================================================================
+
+def _check_s3_public_access(
+    bucket_names: List[str],
+    findings: List[BucketResult],
+) -> None:
+    """
+    Comprueba acceso público en buckets S3 sin credenciales (v1.1).
+
+    Realiza peticiones GET anónimas a las URLs canónicas de S3 y clasifica
+    el resultado según la respuesta HTTP.
+
+    Severidad:
+      CRITICAL — La respuesta contiene ListBucketResult (listado público)
+      HIGH     — Respuesta 200 OK sin listado (contenido accesible)
+      INFO     — 403/404 (bucket privado o inexistente)
+    """
+    import urllib.request
+    import urllib.error
+
+    for nombre in bucket_names:
+        url_raiz = f"https://{nombre}.s3.amazonaws.com/"
+        try:
+            req = urllib.request.Request(
+                url_raiz, headers={"User-Agent": f"VampSecureLabs/{VERSION}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                codigo  = resp.status
+                cuerpo  = resp.read(512).decode("utf-8", errors="ignore")
+                if "ListBucketResult" in cuerpo:
+                    findings.append(BucketResult(
+                        name=nombre, provider="s3", url=url_raiz,
+                        status="LISTING", http_code=codigo,
+                        headers={}, body_snippet=cuerpo[:200],
+                        severity="CRITICAL", finding_id="CLOUD-MC-S3-001",
+                    ))
+                else:
+                    findings.append(BucketResult(
+                        name=nombre, provider="s3", url=url_raiz,
+                        status="PUBLIC", http_code=codigo,
+                        headers={}, body_snippet=cuerpo[:200],
+                        severity="HIGH", finding_id="CLOUD-MC-S3-002",
+                    ))
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (403, 404):
+                # Error inesperado; ignorar silenciosamente
+                pass
+        except Exception:
+            # Error de red o DNS; ignorar
+            pass
+
+
+def _check_azure_blob_public(
+    storage_accounts: List[str],
+    findings: List[BucketResult],
+) -> None:
+    """
+    Comprueba acceso público en cuentas Azure Blob Storage sin credenciales (v1.1).
+
+    Realiza peticiones GET anónimas a la API de listado de contenedores.
+
+    Severidad:
+      HIGH — La respuesta XML contiene EnumerationResults (listado público)
+    """
+    import urllib.request
+    import urllib.error
+
+    for cuenta in storage_accounts:
+        url = f"https://{cuenta}.blob.core.windows.net/?comp=list"
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": f"VampSecureLabs/{VERSION}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                codigo = resp.status
+                cuerpo = resp.read(512).decode("utf-8", errors="ignore")
+                if "EnumerationResults" in cuerpo:
+                    findings.append(BucketResult(
+                        name=cuenta, provider="azure", url=url,
+                        status="LISTING", http_code=codigo,
+                        headers={}, body_snippet=cuerpo[:200],
+                        severity="HIGH", finding_id="CLOUD-MC-AZ-001",
+                    ))
+        except urllib.error.HTTPError:
+            pass  # 403/404 esperado para cuentas privadas
+        except Exception:
+            pass  # Error de red
+
+
+def _check_gcs_public(
+    bucket_names: List[str],
+    findings: List[BucketResult],
+) -> None:
+    """
+    Comprueba acceso público en buckets GCS sin credenciales (v1.1).
+
+    Realiza peticiones GET anónimas a la API JSON de Cloud Storage.
+
+    Severidad:
+      HIGH — La respuesta JSON 200 devuelve metadatos del bucket (acceso público)
+    """
+    import urllib.request
+    import urllib.error
+
+    for nombre in bucket_names:
+        url = f"https://storage.googleapis.com/{nombre}?alt=json"
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": f"VampSecureLabs/{VERSION}"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                codigo = resp.status
+                cuerpo = resp.read(512).decode("utf-8", errors="ignore")
+                if codigo == 200:
+                    findings.append(BucketResult(
+                        name=nombre, provider="gcp", url=url,
+                        status="PUBLIC", http_code=codigo,
+                        headers={}, body_snippet=cuerpo[:200],
+                        severity="HIGH", finding_id="CLOUD-MC-GCS-001",
+                    ))
+        except urllib.error.HTTPError:
+            pass  # 403/404 esperado para buckets privados
+        except Exception:
+            pass  # Error de red
+
 
 async def run(args: argparse.Namespace) -> int:
     """
@@ -1537,6 +1674,33 @@ async def run(args: argparse.Namespace) -> int:
         buckets_found   = found_all,
     )
     all_results.append(result)
+
+    # ── Comprobaciones de mala configuración (v1.1) ───────────────────────────
+    if getattr(args, "check_misconfigs", False) and args.domains:
+        console.print("\n[bold cyan]Comprobando malas configuraciones cloud (sin credenciales)…[/]\n")
+        misconfig_findings: List[BucketResult] = []
+        # Generar nombres de bucket candidatos a partir de los dominios objetivo
+        nombres_mc: List[str] = []
+        for dominio in args.domains:
+            norm = re.sub(r"[^a-z0-9\-]", "-", dominio.lower().strip())
+            norm = re.sub(r"-+", "-", norm).strip("-")
+            if norm:
+                nombres_mc.append(norm)
+
+        if "s3" in providers:
+            _check_s3_public_access(nombres_mc, misconfig_findings)
+        if "azure" in providers:
+            _check_azure_blob_public(nombres_mc, misconfig_findings)
+        if "gcp" in providers:
+            _check_gcs_public(nombres_mc, misconfig_findings)
+
+        if misconfig_findings:
+            console.print(
+                f"  [yellow]Malas configuraciones detectadas:[/] {len(misconfig_findings)}"
+            )
+            found_all.extend(misconfig_findings)
+        else:
+            console.print("  [green]Sin malas configuraciones detectadas.[/]")
 
     # ── Salida en consola ─────────────────────────────────────────────────────
     print_summary_table(found_all)
