@@ -99,7 +99,7 @@ from vampsec_report import (
 # CONSTANTES Y CONFIGURACIÓN
 # =============================================================================
 
-VERSION   = "1.2"
+VERSION   = "1.3"
 TOOL_NAME = "vamp-cloud-enum"
 AUTHOR    = "© VampSecure Studios — VampSecure Labs Security Research Division"
 
@@ -111,7 +111,7 @@ __   ___   __  __ ___  ___ ___ ___ _   _ ___ ___ _      _   ___ ___
  \ V / _ \| |\/| |  _/\__ \ _| (__| |_| |   / _|| |__ / _ \| _ \__ \
   \_/_/ \_\_|  |_|_|  |___/___\___|\___/|_|_\___|____/_/ \_\___/___/
   by Antonio Hernandez "Belky" — VampSecure Studios
-  vamp-cloud-enum v1.2 · Cloud Bucket Enumerator
+  vamp-cloud-enum v1.3 · Cloud Bucket Enumerator
   ────────────────────────────────────────────────────────────────────────
   USO EXCLUSIVO EN AUDITORÍAS AUTORIZADAS · El uso no autorizado es ilegal
 """
@@ -1442,9 +1442,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         dest="check_functions",
         help=(
-            "Comprobar exposición de funciones serverless: AWS Lambda function URLs "
-            "y Azure Function Apps. Genera muchas peticiones (usa con precaución). "
-            "Hallazgos: AWS_LAMBDA_URL_EXPOSED, AZURE_FUNCTION_EXPOSED — v1.2"
+            "Comprobar exposición de funciones serverless: AWS Lambda function URLs, "
+            "Azure Function Apps y GCP Cloud Functions. Genera muchas peticiones "
+            "(usa con precaución). Hallazgos: AWS_LAMBDA_URL_EXPOSED, "
+            "AZURE_FUNCTION_EXPOSED, GCP-FUNC-001 — v1.3"
         ),
     )
 
@@ -1657,6 +1658,145 @@ def _check_azure_function_apps(
                 break  # Si el dominio no resuelve, saltar todas las funciones del mismo app_name
             except Exception:
                 pass
+
+
+# =============================================================================
+# ENUMERADOR DE GCP CLOUD FUNCTIONS EXPUESTAS (v1.3)
+# =============================================================================
+
+# Regiones GCP más comunes para Cloud Functions gen1
+_GCP_FUNC_REGIONES: List[str] = [
+    "us-central1", "europe-west1", "us-east1", "asia-east1",
+]
+
+# Nombres de función habituales a probar en cada región/proyecto candidato
+_GCP_FUNC_NOMBRES: List[str] = [
+    "api", "webhook", "handler", "process", "auth", "login", "upload",
+    "download", "admin", "user", "data", "event", "trigger", "callback",
+    "notify", "health", "status", "test", "staging", "prod",
+]
+
+
+class GCPFunctionsEnumerator:
+    """
+    Enumerador de GCP Cloud Functions expuestas públicamente.
+
+    Prueba URLs del tipo:
+      https://<region>-<project>.cloudfunctions.net/<func_name>
+
+    para detectar funciones accesibles sin autenticación.
+
+    Severidad asignada:
+      HIGH   — HTTP 200 (función pública, responde sin auth)
+      MEDIUM — HTTP 403 (función existe pero requiere autenticación)
+    """
+
+    def enumerate(self, project_candidates: List[str]) -> List[BucketResult]:
+        """
+        Comprueba los project_candidates en las 4 regiones GCP y los 20 nombres
+        de función habituales.
+
+        Parámetros
+        ----------
+        project_candidates : Lista de nombres de proyecto GCP candidatos
+                             (derivados del dominio/org objetivo)
+
+        Retorna
+        -------
+        Lista de BucketResult con hallazgos GCP-FUNC-001.
+        """
+        import urllib.request as _ureq
+        import urllib.error   as _uerr
+        import time           as _time
+
+        hallazgos: List[BucketResult] = []
+
+        for project in project_candidates:
+            for region in _GCP_FUNC_REGIONES:
+                for func_name in _GCP_FUNC_NOMBRES:
+                    url = (
+                        f"https://{region}-{project}.cloudfunctions.net/{func_name}"
+                    )
+                    try:
+                        req = _ureq.Request(
+                            url,
+                            method="HEAD",
+                            headers={"User-Agent": f"VampSecureLabs/{VERSION}"},
+                        )
+                        with _ureq.urlopen(req, timeout=5) as resp:
+                            codigo = resp.status
+                            if codigo == 200:
+                                hallazgos.append(BucketResult(
+                                    name         = f"{project}/{func_name}",
+                                    provider     = "gcp-functions",
+                                    url          = url,
+                                    status       = "PUBLIC",
+                                    http_code    = codigo,
+                                    headers      = dict(resp.headers),
+                                    body_snippet = (
+                                        f"GCP Cloud Function pública (200 OK) — "
+                                        f"región: {region}, proyecto: {project}"
+                                    ),
+                                    severity     = "HIGH",
+                                    finding_id   = "GCP-FUNC-001",
+                                ))
+                    except _uerr.HTTPError as exc:
+                        if exc.code == 403:
+                            # 403 → la función existe pero requiere autenticación IAM
+                            hallazgos.append(BucketResult(
+                                name         = f"{project}/{func_name}",
+                                provider     = "gcp-functions",
+                                url          = url,
+                                status       = "FORBIDDEN",
+                                http_code    = 403,
+                                headers      = {},
+                                body_snippet = (
+                                    f"GCP Cloud Function existe pero requiere "
+                                    f"autenticación (403) — región: {region}"
+                                ),
+                                severity     = "MEDIUM",
+                                finding_id   = "GCP-FUNC-001",
+                            ))
+                    except _uerr.URLError:
+                        # DNS NXDOMAIN u otro error de red → la función no existe
+                        pass
+                    except Exception:
+                        pass
+                    _time.sleep(0.3)  # rate limit: 0.3s entre requests
+
+        return hallazgos
+
+
+def _generar_candidatos_gcp(dominios: List[str]) -> List[str]:
+    """
+    Genera candidatos para el ID de proyecto GCP a partir de los dominios objetivo.
+
+    Un ID de proyecto GCP se forma con letras minúsculas, dígitos y guiones
+    (6-30 caracteres). Derivamos candidatos del dominio principal y variantes.
+    """
+    import re as _re
+
+    candidatos: set = set()
+    for dominio in dominios:
+        partes = dominio.rstrip(".").split(".")
+        # Nombre base: dominio sin TLD
+        if len(partes) >= 2:
+            nombre = partes[-2]
+        else:
+            nombre = partes[0]
+
+        nombre_norm = _re.sub(r"[^a-z0-9\-]", "-", nombre.lower())
+        nombre_norm = _re.sub(r"-+", "-", nombre_norm).strip("-")
+        if not nombre_norm:
+            continue
+
+        candidatos.add(nombre_norm)
+        # Variantes habituales de nombre de proyecto GCP
+        for sfx in ("api", "func", "functions", "app", "service", "backend", "prod"):
+            candidatos.add(f"{nombre_norm}-{sfx}")
+            candidatos.add(f"{sfx}-{nombre_norm}")
+
+    return list(candidatos)
 
 
 # =============================================================================
@@ -1891,11 +2031,11 @@ async def run(args: argparse.Namespace) -> int:
         else:
             console.print("  [green]Sin malas configuraciones detectadas.[/]")
 
-    # ── Comprobaciones de exposición serverless (v1.2) ────────────────────────
+    # ── Comprobaciones de exposición serverless (v1.3) ────────────────────────
     if getattr(args, "check_functions", False) and args.domains:
         console.print(
             "\n[bold cyan]Comprobando exposición de funciones serverless "
-            "(Lambda URLs + Azure Functions)…[/]\n"
+            "(Lambda URLs + Azure Functions + GCP Cloud Functions)…[/]\n"
         )
         function_findings: List[BucketResult] = []
 
@@ -1907,6 +2047,13 @@ async def run(args: argparse.Namespace) -> int:
         if "azure" in providers:
             console.print("  [dim]→ Azure Function Apps…[/]")
             _check_azure_function_apps(args.domains, function_findings)
+
+        if "gcp" in providers:
+            console.print("  [dim]→ GCP Cloud Functions…[/]")
+            project_candidates = _generar_candidatos_gcp(args.domains)
+            gcp_funcs = GCPFunctionsEnumerator()
+            gcp_findings = gcp_funcs.enumerate(project_candidates)
+            function_findings.extend(gcp_findings)
 
         if function_findings:
             console.print(
