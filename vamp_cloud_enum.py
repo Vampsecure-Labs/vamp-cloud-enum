@@ -1649,7 +1649,7 @@ def _check_azure_function_apps(
                             severity="HIGH",
                             finding_id="AZURE_FUNCTION_EXPOSED",
                         ))
-            except _uerr.HTTPError as exc:
+            except _uerr.HTTPError:
                 # 401/403 = función existe pero requiere auth → no es hallazgo
                 # 404 = función no existe → silencioso
                 pass
