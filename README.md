@@ -155,6 +155,73 @@ python vamp_cloud_enum.py -d example.com -d example-cdn.com \
 
 ---
 
+## Sample Output
+
+```bash
+$ python vamp_cloud_enum.py -d example.com --providers s3,azure,gcp
+  vamp-cloud-enum v1.1 — Cloud Storage Bucket Enumerator
+  Target: example.com | Providers: S3 · Azure · GCP
+  Generating 43 candidate bucket names...
+  ────────────────────────────────────────────────────────────
+
+  [CRITICAL] S3 — example-com-backup
+    URL: https://example-com-backup.s3.amazonaws.com
+    Status: PUBLIC · Listing: ENABLED
+    Keywords detected: backup
+    Objects visible: 47  (includes .sql.gz, .tar.gz, config/)
+
+  [HIGH]     S3 — example-assets
+    URL: https://example-assets.s3.amazonaws.com
+    Status: PUBLIC · Listing: disabled
+    Keywords: none
+
+  [MEDIUM]   Azure — examplecomcredentials
+    URL: https://examplecomcredentials.blob.core.windows.net
+    Status: PRIVATE · Namespace: exposed
+    Keywords detected: credentials
+
+  ────────────────────────────────────────────────────────────
+  Candidates tested: 129 (43 × 3 providers) | Buckets found: 3
+  CRITICAL: 1 | HIGH: 1 | MEDIUM: 1 | Duration: 4.2 s
+  Exit code: 2
+```
+
+## Why vamp-cloud-enum vs. CloudEnum · S3Scanner · GrayhatWarfare
+
+| Feature | vamp-cloud-enum | CloudEnum | S3Scanner | GrayhatWarfare |
+|---------|:---------------:|:---------:|:---------:|:--------------:|
+| AWS S3 enumeration | ✅ | ✅ | ✅ | ✅ |
+| Azure Blob Storage | ✅ | ✅ | ❌ | ⚠️ search only |
+| GCP Cloud Storage | ✅ | ✅ | ❌ | ⚠️ search only |
+| Sensitive keyword severity escalation | ✅ | ❌ | ❌ | ❌ |
+| Directory listing detection | ✅ | ⚠️ | ✅ | ❌ |
+| Async concurrent probing (aiohttp) | ✅ | ❌ sync | ❌ | n/a |
+| Standalone HTML report | ✅ dark theme | ❌ | ❌ | ✅ web UI |
+| OWASP Cloud Top 10 mapping | ✅ | ❌ | ❌ | ❌ |
+| CIS Cloud Foundations alignment | ✅ | ❌ | ❌ | ❌ |
+| Self-hosted / no account required | ✅ | ✅ | ✅ | ❌ SaaS |
+
+- **Severity escalation**: automatic CRITICAL upgrade when an exposed bucket name contains sensitive keywords (`backup`, `secret`, `credentials`, `config`, `private`) — surfaces the highest-impact findings without manual triage.
+- **Async three-provider sweep**: all three cloud providers are probed simultaneously per candidate, not in sequence — 43 candidates × 3 providers in under 5 seconds.
+- **Client-ready HTML**: dark-theme standalone report is the only format in this category suitable for immediate pentest deliverable inclusion.
+
+## Check Coverage
+
+| Check ID | Description | Standard | Severity |
+|----------|-------------|----------|----------|
+| CE-001 | S3 bucket publicly accessible with directory listing enabled | OWASP Cloud C4 | CRITICAL |
+| CE-002 | Azure Blob container public with listing (anonymous read+list) | OWASP Cloud C4 · CIS Azure 3.3 | CRITICAL |
+| CE-003 | GCP bucket public with object listing enabled | CIS GCP 5.1 | CRITICAL |
+| CE-004 | S3 bucket public but listing disabled (opaque public) | OWASP Cloud C5 | HIGH |
+| CE-005 | Azure Blob public without listing (unauthenticated read) | CIS Azure 3.3 | HIGH |
+| CE-006 | GCP bucket public without listing enabled | CIS GCP 5.2 | HIGH |
+| CE-007 | S3 website endpoint active (unauthenticated index.html) | OWASP Cloud C4 | HIGH |
+| CE-008 | Private bucket with sensitive keyword in name (namespace leak) | OWASP Cloud C5 | MEDIUM |
+| CE-009 | Bucket namespace exposed — private, no sensitive keywords | CIS Cloud L1 | LOW |
+| CE-010 | Multiple public buckets sharing the same domain root | CIS Cloud Foundations 2.1 | HIGH |
+
+---
+
 ## Part of VampSecure Labs Toolkit
 
 `vamp-cloud-enum` is part of the **VampSecure Labs Security Research Toolkit** — a collection of professional-grade, self-hosted security assessment tools.
