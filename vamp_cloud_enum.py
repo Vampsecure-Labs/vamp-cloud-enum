@@ -99,7 +99,7 @@ from vampsec_report import (
 # CONSTANTES Y CONFIGURACIÓN
 # =============================================================================
 
-VERSION   = "1.3"
+VERSION   = "1.5"
 TOOL_NAME = "vamp-cloud-enum"
 AUTHOR    = "© VampSecure Studios — VampSecure Labs Security Research Division"
 
@@ -182,6 +182,7 @@ class BucketResult:
     severity     : str
     finding_id   : str
     container    : str = ""
+    standard     : str = ""   # Mapeo OWASP Cloud Top 10 / CIS Cloud Foundations
 
 
 @dataclass
@@ -1083,6 +1084,7 @@ def export_json(results: List[CloudEnumResult], path: str) -> None:
                         "status"       : b.status,
                         "http_code"    : b.http_code,
                         "severity"     : b.severity,
+                        "standard"     : b.standard,
                         "headers"      : b.headers,
                         "body_snippet" : b.body_snippet,
                         "container"    : b.container,
@@ -1094,6 +1096,23 @@ def export_json(results: List[CloudEnumResult], path: str) -> None:
         ],
     }
     Path(path).write_text(_json_mod.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _standard_for(status: str) -> str:
+    """Mapea el estado de un hallazgo a su referencia OWASP Cloud Top 10 / CIS."""
+    return {
+        "LISTING": "OWASP Cloud C4 (Insecure Cloud Storage) · CIS Cloud Foundations L1",
+        "PUBLIC":  "OWASP Cloud C4 (Insecure Cloud Storage)",
+        "PRIVATE": "OWASP Cloud C5 (Namespace / Info Exposure)",
+    }.get(status, "OWASP Cloud C4 (Insecure Cloud Storage)")
+
+
+def _attach_standards(results: List[CloudEnumResult]) -> None:
+    """Asigna a cada hallazgo su referencia OWASP Cloud / CIS según su estado."""
+    for res in results:
+        for b in res.buckets_found:
+            if not b.standard:
+                b.standard = _standard_for(b.status)
 
 
 def _count_by(results: List[CloudEnumResult], attr: str) -> Dict[str, int]:
@@ -2068,6 +2087,7 @@ async def run(args: argparse.Namespace) -> int:
     print_critical_panels(found_all)
 
     # ── Exportaciones ─────────────────────────────────────────────────────────
+    _attach_standards(all_results)
     if args.json_out:
         export_json(all_results, args.json_out)
         console.print(f"[green]✔[/] JSON guardado en {args.json_out}")

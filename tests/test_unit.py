@@ -255,3 +255,26 @@ class TestConstantes:
     def test_azure_containers_contiene_web(self):
         """AZURE_CONTAINERS debe incluir '$web' como container estático."""
         assert "$web" in AZURE_CONTAINERS
+
+
+class TestOwaspMapping:
+    """v1.5: cada hallazgo lleva su referencia OWASP Cloud / CIS (claim 'OWASP Cloud Top 10 mapping')."""
+    def _res(self, status):
+        import vamp_cloud_enum as m
+        b = m.BucketResult(name="b", provider="s3", url="u", status=status, http_code=200,
+                           headers={}, body_snippet="", severity="HIGH", finding_id="CLOUD-MC-S3-001")
+        return m.CloudEnumResult(target="t", buckets_checked=1, buckets_found=[b])
+    def test_standard_por_estado(self):
+        import vamp_cloud_enum as m
+        r = self._res("LISTING"); m._attach_standards([r])
+        assert "OWASP Cloud C4" in r.buckets_found[0].standard
+        assert "CIS" in r.buckets_found[0].standard
+        r2 = self._res("PRIVATE"); m._attach_standards([r2])
+        assert "OWASP Cloud C5" in r2.buckets_found[0].standard
+    def test_standard_en_json(self, tmp_path):
+        import vamp_cloud_enum as m, json
+        r = self._res("PUBLIC"); m._attach_standards([r])
+        p = tmp_path / "o.json"; m.export_json([r], str(p))
+        d = json.loads(p.read_text())
+        buckets = next(v for v in d["results"][0].values() if isinstance(v, list) and v and isinstance(v[0], dict))
+        assert "OWASP Cloud C4" in buckets[0]["standard"]

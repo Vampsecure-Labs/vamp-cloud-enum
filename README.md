@@ -249,6 +249,7 @@ $ python vamp_cloud_enum.py -d example.com --providers s3,azure,gcp
 
 | Version | Main changes |
 |---------|-------------|
+| v1.5 | Findings now carry their OWASP Cloud Top 10 / CIS Cloud Foundations reference (`standard` field in JSON) by exposure state — the comparison table advertised the mapping; the output now delivers it. |
 | v1.4 | Bilingual README (EN/ES) |
 | v1.3 | GCP Cloud Functions detection |
 | v1.1 | Cloud Storage Bucket Enumerator — AWS S3, Azure, GCP |
@@ -496,6 +497,7 @@ $ python vamp_cloud_enum.py -d ejemplo.com --providers s3,azure,gcp
 
 | Versión | Cambios principales |
 |---------|---------------------|
+| v1.5 | Los hallazgos llevan ahora su referencia OWASP Cloud Top 10 / CIS Cloud Foundations (campo `standard` en JSON) según el estado de exposición — la tabla comparativa anunciaba el mapeo; la salida ahora lo entrega. |
 | v1.4 | README bilingüe (EN/ES) |
 | v1.3 | Detección de GCP Cloud Functions |
 | v1.1 | Cloud Storage Bucket Enumerator — AWS S3, Azure, GCP |
