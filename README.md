@@ -1,6 +1,6 @@
 <!-- © VampSecure Studios — VampSecure Labs Security Research Division -->
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.4-crimson?style=flat-square" />
+  <img src="https://img.shields.io/badge/version-1.5-crimson?style=flat-square" />
   <img src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square&logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/providers-AWS%20%7C%20Azure%20%7C%20GCP-teal?style=flat-square" />
   <img src="https://img.shields.io/badge/VampSecure_Labs-Security_Research-8b0000?style=flat-square" />
@@ -163,7 +163,7 @@ python vamp_cloud_enum.py -d example.com -d example-cdn.com \
 
 ```bash
 $ python vamp_cloud_enum.py -d example.com --providers s3,azure,gcp
-  vamp-cloud-enum v1.4 — Cloud Storage Bucket Enumerator
+  vamp-cloud-enum v1.5 — Cloud Storage Bucket Enumerator
   Target: example.com | Providers: S3 · Azure · GCP
   Generating 43 candidate bucket names...
   ────────────────────────────────────────────────────────────
@@ -411,7 +411,7 @@ python vamp_cloud_enum.py -d ejemplo.com -d ejemplo-cdn.com \
 
 ```bash
 $ python vamp_cloud_enum.py -d ejemplo.com --providers s3,azure,gcp
-  vamp-cloud-enum v1.4 — Cloud Storage Bucket Enumerator
+  vamp-cloud-enum v1.5 — Cloud Storage Bucket Enumerator
   Target: ejemplo.com | Providers: S3 · Azure · GCP
   Generando 43 nombres candidatos de bucket...
   ────────────────────────────────────────────────────────────
